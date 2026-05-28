@@ -138,9 +138,8 @@ main();
 		//      and the next user arg bleeds in. Appending a dot ("%~dp0.")
 		//      makes the trailing char `.`, which path.join normalizes away.
 		//   3. With `node -e "<code>" "<path>" <args...>`, argv is
-		//      [node, '[eval]', path, ...userArgs], so slice past index 3.
 		return `@echo off
-node -e "const path=require('path');const{BinaryManager}=require(path.join(process.argv[2],'..','dist','binary-manager.js'));const{spawn}=require('child_process');(async()=>{try{const m=new BinaryManager();const b=await m.ensureBinary();const c=spawn(b,process.argv.slice(3),{stdio:'inherit',env:process.env,name:'datadog-agent'});c.on('exit',code=>process.exit(code||0));}catch(e){console.error('Failed to run datadog-agent:',e.message);process.exit(1);}})()" "%~dp0." %*
+node -e "const path=require('path');const{BinaryManager}=require(path.join(process.argv[2],'..','dist','binary-manager.js'));const{spawn}=require('child_process');(async()=>{try{const m=new BinaryManager();const b=await m.ensureBinary();const c=spawn(b,process.argv.slice(3),{stdio:'inherit',env:process.env,name:'datadog-agent'});c.on('exit',code=>process.exit(code||0));}catch(e){console.error('Failed to run datadog-agent:',e.message);process.exit(1);}})()" "%~dp0" %*
 `;
 	}
 
