@@ -77,11 +77,17 @@ export abstract class BaseBuilder {
 	): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const [cmd, ...args] = command.split(" ");
+			// Harper v5 requires `name` on spawn options when invoked from
+			// inside a Harper application. The builder is normally run from a
+			// dev shell or CI, but adding `name` keeps the call valid if the
+			// builder API is ever invoked from a Harper-managed process. The
+			// option is silently ignored by stock Node.js.
 			const child = spawn(cmd, args, {
 				cwd,
 				env,
 				stdio: ["inherit", "pipe", "pipe"],
-			});
+				name: `datadog-agent-builder:${cmd}`,
+			} as any);
 
 			let stdout = "";
 			let stderr = "";

@@ -98,9 +98,14 @@ async function main() {
     const manager = new BinaryManager();
     const binaryPath = await manager.ensureBinary();
 
+    // Harper v5 requires \`name\` on spawn options when invoked from inside a
+    // Harper application — it lets Harper dedupe the child across worker
+    // threads. The option is silently ignored by stock Node.js, so this is
+    // safe outside Harper too.
     const child = spawn(binaryPath, process.argv.slice(2), {
       stdio: 'inherit',
-      env: process.env
+      env: process.env,
+      name: 'datadog-agent'
     });
 
     child.on('exit', (code) => {
@@ -118,8 +123,13 @@ main();
 	}
 
 	private createWindowsWrapper(): string {
+		// The original cmd wrapper invoked `dist/binary-manager.js` directly,
+		// but that file is a module — it has no top-level main and never
+		// spawned the agent. Delegate to the same Node wrapper logic used on
+		// Unix so the agent binary is actually launched (with the v5-required
+		// `name` option).
 		return `@echo off
-node "%~dp0\\..\\dist\\binary-manager.js" %*
+node -e "(async()=>{const{BinaryManager}=require('%~dp0\\..\\dist\\binary-manager.js');const{spawn}=require('child_process');try{const m=new BinaryManager();const b=await m.ensureBinary();const c=spawn(b,process.argv.slice(1),{stdio:'inherit',env:process.env,name:'datadog-agent'});c.on('exit',code=>process.exit(code||0));}catch(e){console.error('Failed to run datadog-agent:',e.message);process.exit(1);}})()" %*
 `;
 	}
 

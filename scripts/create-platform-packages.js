@@ -72,10 +72,10 @@ const packageTemplate = {
 	main: "index.js",
 	repository: {
 		type: "git",
-		url: "https://github.com/HarperDB/datadog-agent-binary.git",
+		url: "https://github.com/HarperFast/datadog-agent-binary.git",
 	},
 	keywords: ["datadog", "agent", "binary"],
-	author: "HarperDB",
+	author: "Harper",
 	license: "Apache-2.0",
 	files: ["bin/", "index.js"],
 };
@@ -93,7 +93,7 @@ function writePlatformPackageJson(platform) {
 	const arch = platform.getArch();
 	const packageJson = {
 		...packageTemplate,
-		name: `@harperdb/datadog-agent-binary-${platform.getName()}`,
+		name: `@harperfast/datadog-agent-binary-${platform.getName()}`,
 		description: `Datadog Agent binary for ${os} ${arch}`,
 		os: [os],
 		cpu: [arch],
