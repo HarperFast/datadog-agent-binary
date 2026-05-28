@@ -191,17 +191,26 @@ option so Harper can dedupe the child across worker threads.
 The `datadog-agent` CLI shim and the `BinaryManager`-generated wrapper
 already pass `name: "datadog-agent"`, so the only thing the consuming
 application needs to do is register the resolved binary path in
-`harperdb-config.yaml`:
+`harperdb-config.yaml`. Harper does an exact-match lookup against the
+**absolute** path passed to `spawn`, so the full path is required — a bare
+command name will not match.
+
+Resolve the path with `BinaryManager.ensureBinary()`:
+
+```js
+import { BinaryManager } from '@harperfast/datadog-agent-binary';
+const binaryPath = await new BinaryManager().ensureBinary();
+console.log(binaryPath);
+// e.g. /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
+```
+
+Then add that exact path to `harperdb-config.yaml`:
 
 ```yaml
 applications:
   allowedSpawnCommands:
-    - datadog-agent
+    - /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
 ```
-
-(Use the full resolved path returned by
-`BinaryManager.ensureBinary()` if your deployment requires an absolute
-match.)
 
 ### Install scripts
 
