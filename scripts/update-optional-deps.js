@@ -13,7 +13,7 @@ const platforms = getAllSupportedPlatforms();
 packageJson.optionalDependencies = {};
 platforms.forEach((platform) => {
 	packageJson.optionalDependencies[
-		`@harperdb/datadog-agent-binary-${platform}`
+		`@harperfast/datadog-agent-binary-${platform}`
 	] = packageJson.version;
 });
 

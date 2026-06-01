@@ -1,6 +1,6 @@
 # Datadog Agent Binary
 
-[![Datadog Agent Binaries](https://github.com/HarperDB/datadog-agent-binary/actions/workflows/build-release.yml/badge.svg)](https://github.com/HarperDB/datadog-agent-binary/actions/workflows/build-release.yml)
+[![Datadog Agent Binaries](https://github.com/HarperFast/datadog-agent-binary/actions/workflows/build-release.yml/badge.svg)](https://github.com/HarperFast/datadog-agent-binary/actions/workflows/build-release.yml)
 
 An NPM package that provides pre-built Datadog Agent binaries.
 
@@ -9,13 +9,13 @@ Additionally this repo provides tools to build from source for Linux, Windows, a
 ## Installation
 
 ```bash
-npm install @harperdb/datadog-agent-binary
+npm install @harperfast/datadog-agent-binary
 ```
 
 Or install globally:
 
 ```bash
-npm install -g @harperdb/datadog-agent-binary
+npm install -g @harperfast/datadog-agent-binary
 ```
 
 When you install this package, it automatically downloads the appropriate pre-built Datadog Agent binary for your platform.
@@ -65,7 +65,7 @@ datadog-agent-build version
 ### Programmatic Usage
 
 ```typescript
-import { DatadogAgentBuilder, BinaryManager } from '@harperdb/datadog-agent-binary';
+import { DatadogAgentBuilder, BinaryManager } from '@harperfast/datadog-agent-binary';
 
 // Use pre-built binaries
 const manager = new BinaryManager();
@@ -145,7 +145,7 @@ interface BuildOptions {
 ### Platform Detection
 
 ```typescript
-import { detectPlatform, getAllSupportedPlatforms } from '@harperdb/datadog-agent-binary';
+import { detectPlatform, getAllSupportedPlatforms } from '@harperfast/datadog-agent-binary';
 
 const currentPlatform = detectPlatform();
 const allPlatforms = getAllSupportedPlatforms();
@@ -175,6 +175,59 @@ npm run typecheck
 # Build a single platform for testing
 npm run build-platform
 ```
+
+## Harper v5 (Lincoln) compatibility
+
+This package is compatible with Harper v5. A few notes for consumers running
+Harper v5 applications:
+
+### Spawning the agent from a Harper component
+
+Harper v5 tightens `node:child_process` semantics for code running inside an
+application. Any `spawn` / `exec` / `execFile` may only target an executable
+listed in `applications.allowedSpawnCommands`, and must include a `name`
+option so Harper can dedupe the child across worker threads.
+
+The `datadog-agent` CLI shim and the `BinaryManager`-generated wrapper
+already pass `name: "datadog-agent"`, so the only thing the consuming
+application needs to do is register the resolved binary path in
+`harperdb-config.yaml`. Harper does an exact-match lookup against the
+**absolute** path passed to `spawn`, so the full path is required — a bare
+command name will not match.
+
+Resolve the path with `BinaryManager.ensureBinary()`:
+
+```js
+import { BinaryManager } from '@harperfast/datadog-agent-binary';
+const binaryPath = await new BinaryManager().ensureBinary();
+console.log(binaryPath);
+// e.g. /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
+```
+
+Then add that exact path to `harperdb-config.yaml`:
+
+```yaml
+applications:
+  allowedSpawnCommands:
+    - /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
+```
+
+### Install scripts
+
+Harper v5 installs packages with `--ignore-scripts` by default. This package
+and its platform sub-packages **do not** rely on install scripts — the
+correct platform binary is selected automatically through
+`optionalDependencies`. You do **not** need to set
+`applications.allowInstallScripts: true` in `harperdb-config.yaml` to
+install this package.
+
+### Build-time tooling
+
+`DatadogAgentBuilder` (the source-build path that shells out to `dda`, `go`,
+`pipx`, `pip`, etc.) is intended for use from a developer shell or CI runner,
+not from inside a Harper-managed process. The runtime entry point —
+`BinaryManager.ensureBinary()` plus the `datadog-agent` wrapper — is the
+supported way to use this package from a Harper component.
 
 ## License
 
