@@ -37,6 +37,13 @@ datadog-agent status
 datadog-agent version
 ```
 
+### Connecting to Datadog
+
+This package ships the full Datadog Agent. Configuring it (API key, site, what
+to collect) is done the standard Datadog way — e.g. the `DD_API_KEY`/`DD_SITE`
+environment variables or `datadog.yaml` — and is independent of this package.
+See Datadog's [Agent configuration docs](https://docs.datadoghq.com/agent/guide/environment-variables/).
+
 ### Building from Source
 
 If you need to build from source or want to build for multiple platforms:
