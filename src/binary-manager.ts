@@ -55,14 +55,15 @@ export class BinaryManager {
 	): Promise<string | null> {
 		const packageName = `@harperfast/datadog-agent-binary-${platform.getName()}`;
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-var-requires
-			const pkg = require(packageName) as {
+			const pkg = (await import(packageName)) as {
+				default?: { getBinaryPath?: () => string };
 				getBinaryPath?: () => string;
 			};
-			if (typeof pkg.getBinaryPath !== "function") {
+			const getBinaryPath = pkg.getBinaryPath || pkg.default?.getBinaryPath;
+			if (typeof getBinaryPath !== "function") {
 				return null;
 			}
-			const binaryPath = pkg.getBinaryPath();
+			const binaryPath = getBinaryPath();
 			if (await this.binaryExists(binaryPath)) {
 				return binaryPath;
 			}
