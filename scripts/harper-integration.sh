@@ -57,6 +57,9 @@ teardown() {
 	endgroup
 	harper stop >/dev/null 2>&1 || true
 	[ -n "$HARPER_PID" ] && kill "$HARPER_PID" 2>/dev/null || true
+	if [ -z "${RUNNER_TEMP:-}" ] && [ -d "$WORK_DIR" ]; then
+		rm -rf "$WORK_DIR"
+	fi
 	[ "$status" -eq 0 ] && echo "Harper integration test passed." \
 		|| echo "Harper integration test FAILED (exit $status)." >&2
 }
