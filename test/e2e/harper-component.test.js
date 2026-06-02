@@ -39,18 +39,34 @@ const stubBinaryPath = path.join(platformPkgDir, "bin", binaryName);
 const STUB_MARKER = "STUB_DATADOG_AGENT_OK";
 // Marks the package dir as our throwaway fixture so we never delete a real one.
 const SENTINEL = path.join(platformPkgDir, ".harper-test-fixture");
+// Where a real (npm-installed) platform package is moved while the fixture is
+// in place. Once the package is published, `npm ci` installs the matching
+// platform package into node_modules, so the fixture must coexist with it.
+const BACKUP = `${platformPkgDir}.real-backup`;
 
 function safeRemoveFixture() {
 	try {
 		fs.rmSync(platformPkgDir, { recursive: true, force: true });
+	} catch {
+		// Some filesystems (e.g. certain CI/sandbox mounts) disallow unlink.
+		// Leaving the fixture behind is harmless: node_modules is ephemeral and
+		// createFakePlatformPackage() is idempotent on re-run.
+	}
+	// Restore the real package we moved aside (if any).
+	if (fs.existsSync(BACKUP)) {
+		try {
+			fs.renameSync(BACKUP, platformPkgDir);
+		} catch {
+			/* best effort */
+		}
+	}
+	try {
 		const scopeDir = path.dirname(platformPkgDir);
 		if (fs.existsSync(scopeDir) && fs.readdirSync(scopeDir).length === 0) {
 			fs.rmdirSync(scopeDir);
 		}
 	} catch {
-		// Some filesystems (e.g. certain CI/sandbox mounts) disallow unlink.
-		// Leaving the fixture behind is harmless: node_modules is ephemeral and
-		// createFakePlatformPackage() is idempotent on re-run.
+		/* ignore */
 	}
 }
 
@@ -65,9 +81,10 @@ function safeRemoveFixture() {
  */
 function createFakePlatformPackage() {
 	if (fs.existsSync(platformPkgDir) && !fs.existsSync(SENTINEL)) {
-		throw new Error(
-			`Refusing to overwrite existing ${platformPkgName} in node_modules`
-		);
+		// A real (npm-installed) platform package is here — move it aside and
+		// restore it in teardown, rather than clobbering it.
+		fs.rmSync(BACKUP, { recursive: true, force: true });
+		fs.renameSync(platformPkgDir, BACKUP);
 	}
 
 	fs.mkdirSync(path.join(platformPkgDir, "bin"), { recursive: true });
