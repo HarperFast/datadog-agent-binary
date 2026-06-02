@@ -16,6 +16,11 @@ env:
 
 jobs:
   build:
+    # Legs flagged `experimental` (e.g. macos-13, whose Intel runner GitHub has
+    # retired) are allowed to fail so they don't block `release`/`publish`,
+    # which depend on this job. The publish step skips any platform whose
+    # binary is missing.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,8 +32,11 @@ jobs:
             platform: linux-arm64
 
           # macOS builds
+          # macos-13 is GitHub's Intel runner, which is being retired — allow
+          # this leg to fail rather than block the release.
           - os: macos-13
             platform: macos-x86_64
+            experimental: true
           - os: macos-latest
             platform: macos-arm64
 
