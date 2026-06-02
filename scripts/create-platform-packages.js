@@ -46,7 +46,28 @@ function copyPlatformBinary(platform) {
 	if (!fs.existsSync(binaryPath)) {
 		throw new Error(`Binary not found at ${binaryPath}`);
 	}
-	fs.copyFileSync(binaryPath, path.join(packageDir, "bin", binaryName));
+	const destPath = path.join(packageDir, "bin", binaryName);
+	fs.copyFileSync(binaryPath, destPath);
+	// Ensure the executable bit is set so it survives `npm publish`/`npm install`.
+	fs.chmodSync(destPath, 0o755);
+}
+
+// npm filters optionalDependencies using Node's `process.platform` and
+// `process.arch` values, NOT our human-readable names. Map to those so the
+// right binary package actually installs on each host.
+const NPM_OS = { linux: "linux", macos: "darwin", windows: "win32" };
+const NPM_CPU = { x86_64: "x64", arm64: "arm64" };
+
+function npmOS(os) {
+	const mapped = NPM_OS[os];
+	if (!mapped) throw new Error(`No npm os mapping for "${os}"`);
+	return mapped;
+}
+
+function npmCPU(arch) {
+	const mapped = NPM_CPU[arch];
+	if (!mapped) throw new Error(`No npm cpu mapping for "${arch}"`);
+	return mapped;
 }
 
 const version = getParentVersion();
@@ -95,8 +116,8 @@ function writePlatformPackageJson(platform) {
 		...packageTemplate,
 		name: `@harperfast/datadog-agent-binary-${platform.getName()}`,
 		description: `Datadog Agent binary for ${os} ${arch}`,
-		os: [os],
-		cpu: [arch],
+		os: [npmOS(os)],
+		cpu: [npmCPU(arch)],
 		keywords: [...packageTemplate.keywords, os, arch],
 	};
 
@@ -117,10 +138,24 @@ function writePlatformIndexJs(platform) {
 	);
 }
 
+// In --all mode (release), tolerate a platform whose binary didn't build:
+// skip it with a warning rather than aborting the whole release, so the
+// platforms that did build still get published. Single-platform and --dummy
+// modes still fail hard, since a missing binary there is unexpected.
+const tolerateMissing = lastArg === "--all";
+
 platforms.forEach((platform) => {
 	createPackageDir(platform);
 	if (!createDummyPackages) {
-		copyPlatformBinary(platform);
+		try {
+			copyPlatformBinary(platform);
+		} catch (err) {
+			if (tolerateMissing) {
+				console.warn(`Skipping ${platform.getName()}: ${err.message}`);
+				return;
+			}
+			throw err;
+		}
 	}
 	const packageJson = writePlatformPackageJson(platform);
 	writePlatformIndexJs(platform);

@@ -270,10 +270,9 @@ jobs:
           pushd artifacts
           for artifact in *
           do
-            echo "Moving contents of $artifact into ../build/$platform/bin/"
-            echo "Listing contents of $artifact"
-            ls -l "$artifact"
             platform=${artifact#agent-}
+            echo "Moving contents of $artifact into ../build/$platform/bin/"
+            ls -l "$artifact"
             mkdir -p "../build/$platform/bin"
             mv "$artifact"/* "../build/$platform/bin/"
           done
@@ -291,6 +290,16 @@ jobs:
 
       - name: Build TypeScript
         run: npm run build
+
+      # The release tag (vX.Y.Z) is the version everything is published at, so
+      # the npm package version must match it. This runs the `version` lifecycle
+      # script (build + update-optional-deps), keeping optionalDependencies
+      # pinned to the same version. --allow-same-version makes re-runs safe.
+      - name: Set package version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting npm package version to $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Prepare platform packages with binaries
         run: |

@@ -18,7 +18,7 @@ Or install globally:
 npm install -g @harperfast/datadog-agent-binary
 ```
 
-When you install this package, it automatically downloads the appropriate pre-built Datadog Agent binary for your platform.
+Installing the package pulls in the pre-built Datadog Agent binary for your platform automatically. The binary ships inside a platform-specific package (e.g. `@harperfast/datadog-agent-binary-linux-x86_64`) declared as an `optionalDependency`; npm installs only the one whose `os`/`cpu` match your machine.
 
 ## Usage
 
@@ -46,7 +46,7 @@ If you need to build from source or want to build for multiple platforms:
 datadog-agent-build build
 
 # Specify version and output directory
-datadog-agent-build build --version 7.50.0 --output ~/my-datadog-agent-build
+datadog-agent-build build --datadog-version 7.50.0 --output ~/my-datadog-agent-build
 ```
 
 ### Management Commands
@@ -69,7 +69,7 @@ import { DatadogAgentBuilder, BinaryManager } from '@harperfast/datadog-agent-bi
 
 // Use pre-built binaries
 const manager = new BinaryManager();
-const binaryPath = await manager.ensureBinary(); // Downloads if needed
+const binaryPath = await manager.ensureBinary(); // resolves the platform binary installed via optionalDependencies
 console.log(`Datadog Agent at: ${binaryPath}`);
 
 // Build from source
@@ -145,20 +145,20 @@ interface BuildOptions {
 ### Platform Detection
 
 ```typescript
-import { detectPlatform, getAllSupportedPlatforms } from '@harperfast/datadog-agent-binary';
+import { Platform, getAllSupportedPlatforms } from '@harperfast/datadog-agent-binary';
 
-const currentPlatform = detectPlatform();
-const allPlatforms = getAllSupportedPlatforms();
+const currentPlatform = Platform.current().getName(); // e.g. "linux-x86_64"
+const allPlatforms = getAllSupportedPlatforms();       // all supported "<os>-<arch>" names
 ```
 
 ## How It Works
 
-1. **Pre-built Binaries**: When you install this package, it automatically downloads the appropriate Datadog Agent binary for your platform from GitHub releases.
+1. **Pre-built binaries via optional dependencies**: The main package is platform-agnostic and declares one `optionalDependency` per platform. Each of those packages contains the pre-built agent binary and is tagged with npm `os`/`cpu`, so `npm install` pulls in only the package matching your machine. At runtime `BinaryManager.ensureBinary()` resolves the binary from that installed package.
 
-3. **Release Process**:
-   - GitHub Actions builds binaries for all platforms from Datadog Agent source
-   - Binaries are packaged and uploaded to GitHub releases
-   - npm install downloads the right binary for your platform
+2. **Release Process**:
+   - GitHub Actions builds the agent for all platforms from Datadog Agent source.
+   - Each platform binary is published as its own npm package, and the main package is published referencing them as optional dependencies.
+   - Standalone archives are also attached to the GitHub Release for manual download/verification.
 
 ## Development
 
@@ -172,8 +172,11 @@ npm run build
 # Run type checking
 npm run typecheck
 
-# Build a single platform for testing
-npm run build-platform
+# Build the agent for the current platform
+npm run build-agent
+
+# Run the tests
+npm test
 ```
 
 ## Harper v5 (Lincoln) compatibility
@@ -201,7 +204,7 @@ Resolve the path with `BinaryManager.ensureBinary()`:
 import { BinaryManager } from '@harperfast/datadog-agent-binary';
 const binaryPath = await new BinaryManager().ensureBinary();
 console.log(binaryPath);
-// e.g. /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
+// e.g. /app/node_modules/@harperfast/datadog-agent-binary-linux-x86_64/bin/datadog-agent
 ```
 
 Then add that exact path to `harperdb-config.yaml`:
@@ -209,7 +212,7 @@ Then add that exact path to `harperdb-config.yaml`:
 ```yaml
 applications:
   allowedSpawnCommands:
-    - /app/node_modules/@harperfast/datadog-agent-binary-linux-x64/bin/datadog-agent
+    - /app/node_modules/@harperfast/datadog-agent-binary-linux-x86_64/bin/datadog-agent
 ```
 
 ### Install scripts

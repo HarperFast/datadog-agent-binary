@@ -22,7 +22,7 @@
 		"prepare": "husky",
 		"version": "npm run build && npm run update-optional-deps",
 		"prepublishOnly": "npm run build",
-		"test-build": "npx tsx test-build.ts"
+		"test": "npm run build && node --test test/e2e/harper-component.test.js"
 	},
 	"keywords": [
 		"datadog",
