@@ -19,10 +19,40 @@ export abstract class BaseBuilder {
 		logger.info("Installing Go tools...");
 		await this.executeCommand("dda --no-interactive inv install-tools");
 
-		logger.info("Building agent...");
+		const buildArgs = this.getAgentBuildArgs();
+		logger.info(`Building agent (args: ${buildArgs})...`);
 		await this.executeCommand(
-			"dda --no-interactive inv agent.build --build-exclude=systemd"
+			`dda --no-interactive inv agent.build ${buildArgs}`
 		);
+	}
+
+	/**
+	 * Flags passed to `dda inv agent.build`.
+	 *
+	 * IMPORTANT: by default the agent is built with the embedded Python runtime,
+	 * which makes the binary dynamically link `libdatadog-agent-rtloader` (and an
+	 * embedded interpreter) by an rpath pointing into the build tree. That binary
+	 * does NOT run on any machine other than the build server — it can't find
+	 * those libraries. To ship a relocatable binary via npm, the agent must be
+	 * built self-contained (no embedded Python), which is sufficient for the
+	 * log/metric forwarding use case.
+	 *
+	 * The exact flag to disable Python varies by `dda`/invoke version, so this is
+	 * overridable via the DD_AGENT_BUILD_ARGS environment variable — set it in CI
+	 * to iterate on the right flag without a code change. Note: args are spawned
+	 * without a shell, so each token must stand alone (no quoted/empty values).
+	 */
+	protected getAgentBuildArgs(): string {
+		const override = process.env.DD_AGENT_BUILD_ARGS;
+		if (override && override.trim()) {
+			return override.trim();
+		}
+		// Exclude the `python` build tag: it's what links librtloader (the cgo
+		// Python bridge), which is the non-relocatable dependency that prevents
+		// the binary from running off the build machine. Dropping it yields a
+		// self-contained binary and only removes Python-based integration checks,
+		// which aren't needed for log/metric forwarding.
+		return "--build-exclude=systemd,python";
 	}
 
 	protected async executeCommand(
