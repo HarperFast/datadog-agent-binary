@@ -1,0 +1,18 @@
+# Normalize line endings to LF in the working tree on every platform.
+# Without this, Windows CI checks files out as CRLF and `prettier --check`
+# (endOfLine: "lf") flags every file.
+* text=auto eol=lf
+
+# Shell scripts and the Node bin shim must stay LF to run.
+*.sh text eol=lf
+bin/datadog-agent text eol=lf
+
+# Binary assets — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gz binary
+*.tgz binary
+*.zip binary
