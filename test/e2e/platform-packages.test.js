@@ -1,0 +1,121 @@
+"use strict";
+
+const { test, before, after } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+function findRepoRoot(start) {
+	let dir = start;
+	while (!fs.existsSync(path.join(dir, "package.json"))) {
+		const parent = path.dirname(dir);
+		if (parent === dir) throw new Error("Could not locate package root");
+		dir = parent;
+	}
+	return dir;
+}
+
+const REPO_ROOT = findRepoRoot(__dirname);
+const mainPkg = require(path.join(REPO_ROOT, "package.json"));
+
+// What each generated platform package's os/cpu MUST be (Node's values).
+const EXPECTED = {
+	"linux-x86_64": { os: "linux", cpu: "x64" },
+	"linux-arm64": { os: "linux", cpu: "arm64" },
+	"macos-x86_64": { os: "darwin", cpu: "x64" },
+	"macos-arm64": { os: "darwin", cpu: "arm64" },
+	"windows-x86_64": { os: "win32", cpu: "x64" },
+};
+
+let workDir;
+let npmDir;
+
+before(() => {
+	// Run the generator in an isolated copy so we don't write into the repo.
+	workDir = fs.mkdtempSync(path.join(os.tmpdir(), "ddab-platform-pkgs-"));
+	fs.mkdirSync(path.join(workDir, "scripts"));
+	fs.mkdirSync(path.join(workDir, "dist"));
+	fs.copyFileSync(
+		path.join(REPO_ROOT, "scripts", "create-platform-packages.js"),
+		path.join(workDir, "scripts", "create-platform-packages.js")
+	);
+	// The generator only requires dist/platform.js (type imports are erased).
+	fs.copyFileSync(
+		path.join(REPO_ROOT, "dist", "platform.js"),
+		path.join(workDir, "dist", "platform.js")
+	);
+	fs.copyFileSync(
+		path.join(REPO_ROOT, "package.json"),
+		path.join(workDir, "package.json")
+	);
+
+	execFileSync(
+		process.execPath,
+		[path.join(workDir, "scripts", "create-platform-packages.js"), "--dummy"],
+		{ stdio: "ignore" }
+	);
+	npmDir = path.join(workDir, "npm");
+});
+
+after(() => {
+	if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+function readGenerated() {
+	const out = {};
+	for (const name of fs.readdirSync(npmDir)) {
+		const pj = path.join(npmDir, name, "package.json");
+		if (fs.existsSync(pj)) {
+			out[name] = JSON.parse(fs.readFileSync(pj, "utf8"));
+		}
+	}
+	return out;
+}
+
+test("generates exactly the expected set of platform packages", () => {
+	const generated = Object.keys(readGenerated()).sort();
+	assert.deepEqual(generated, Object.keys(EXPECTED).sort());
+});
+
+test("each platform package has npm-valid os/cpu (Node values, not human-readable)", () => {
+	const generated = readGenerated();
+	for (const [name, expected] of Object.entries(EXPECTED)) {
+		const pkg = generated[name];
+		assert.ok(pkg, `missing generated package: ${name}`);
+		assert.deepEqual(
+			pkg.os,
+			[expected.os],
+			`${name}: os must be ${expected.os} (npm matches process.platform)`
+		);
+		assert.deepEqual(
+			pkg.cpu,
+			[expected.cpu],
+			`${name}: cpu must be ${expected.cpu} (npm matches process.arch)`
+		);
+	}
+});
+
+test("generated package names exactly match the main package optionalDependencies", () => {
+	const generatedNames = Object.keys(readGenerated())
+		.map((n) => `@harperfast/datadog-agent-binary-${n}`)
+		.sort();
+	const declared = Object.keys(mainPkg.optionalDependencies).sort();
+	assert.deepEqual(generatedNames, declared);
+});
+
+test("all platform packages are pinned to the main package version", () => {
+	const generated = readGenerated();
+	for (const [name, pkg] of Object.entries(generated)) {
+		assert.equal(
+			pkg.version,
+			mainPkg.version,
+			`${name} version should equal main package version ${mainPkg.version}`
+		);
+	}
+	// optionalDependencies must also all reference that same version.
+	for (const [dep, range] of Object.entries(mainPkg.optionalDependencies)) {
+		assert.equal(range, mainPkg.version, `${dep} should be ${mainPkg.version}`);
+	}
+});

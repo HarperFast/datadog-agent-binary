@@ -104,11 +104,15 @@ function createFakePlatformPackage() {
 }
 
 /**
- * A minimal stand-in for Harper v5's spawn enforcement. Harper rejects any
- * spawn whose absolute command is not in allowedSpawnCommands, and requires a
- * `name` option. This lets us assert our usage satisfies that contract.
+ * A minimal stand-in for Harper v5's spawn *enforcement*. Harper rejects any
+ * spawn that lacks a `name` option or whose absolute command isn't listed in
+ * applications.allowedSpawnCommands. This is a pure predicate: it throws when
+ * the spawn would be rejected and returns otherwise, so we can assert our usage
+ * satisfies the contract without actually executing a binary (which is
+ * platform-fragile — e.g. spawning a stub `.exe` on Windows throws `UNKNOWN`).
+ * Real end-to-end execution is covered separately by the shim test below.
  */
-function harperGuardedSpawn(command, args, options, allowedSpawnCommands) {
+function assertHarperSpawnAllowed(command, options, allowedSpawnCommands) {
 	if (!options || typeof options.name !== "string" || options.name === "") {
 		throw new Error("Harper v5: spawn requires a non-empty `name` option");
 	}
@@ -117,7 +121,6 @@ function harperGuardedSpawn(command, args, options, allowedSpawnCommands) {
 			`Harper v5: '${command}' is not in applications.allowedSpawnCommands`
 		);
 	}
-	return spawn(command, args, options);
 }
 
 function runToCompletion(child) {
@@ -157,9 +160,8 @@ test("Harper allowlist accepts the absolute resolved path, rejects a bare comman
 	// A bare command name does not match Harper's absolute-path allowlist.
 	assert.throws(
 		() =>
-			harperGuardedSpawn(
+			assertHarperSpawnAllowed(
 				"datadog-agent",
-				["status"],
 				{ name: "datadog-agent" },
 				allowedSpawnCommands
 			),
@@ -167,21 +169,19 @@ test("Harper allowlist accepts the absolute resolved path, rejects a bare comman
 	);
 
 	// The exact absolute path is allowed.
-	assert.doesNotThrow(() => {
-		const child = harperGuardedSpawn(
+	assert.doesNotThrow(() =>
+		assertHarperSpawnAllowed(
 			binaryPath,
-			["status"],
-			{ name: "datadog-agent", stdio: "ignore" },
+			{ name: "datadog-agent" },
 			allowedSpawnCommands
-		);
-		child.kill();
-	});
+		)
+	);
 });
 
 test("Harper requires a `name` option on spawn", async () => {
 	const binaryPath = await new BinaryManager().ensureBinary();
 	assert.throws(
-		() => harperGuardedSpawn(binaryPath, [], { stdio: "ignore" }, [binaryPath]),
+		() => assertHarperSpawnAllowed(binaryPath, {}, [binaryPath]),
 		/requires a non-empty `name` option/
 	);
 });
