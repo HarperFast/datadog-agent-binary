@@ -98,7 +98,7 @@ const packageTemplate = {
 	keywords: ["datadog", "agent", "binary"],
 	author: "Harper",
 	license: "Apache-2.0",
-	files: ["bin/", "index.js"],
+	files: ["bin/", "index.js", "README.md"],
 };
 
 const indexTemplate = `const path = require('path');
@@ -138,6 +138,36 @@ function writePlatformIndexJs(platform) {
 	);
 }
 
+function writePlatformReadme(platform) {
+	const name = `@harperfast/datadog-agent-binary-${platform.getName()}`;
+	const os = platform.getOS();
+	const arch = platform.getArch();
+	const readme = `# ${name}
+
+Pre-built Datadog Agent binary for **${os} ${arch}**.
+
+This is a platform-specific companion package for
+[\`@harperfast/datadog-agent-binary\`](https://www.npmjs.com/package/@harperfast/datadog-agent-binary).
+You should **not** install it directly — install the main package instead, and
+npm will automatically select the correct binary for your OS and CPU via
+\`optionalDependencies\`:
+
+\`\`\`bash
+npm install @harperfast/datadog-agent-binary
+\`\`\`
+
+The main package resolves the binary shipped here at runtime. See the
+[main package README](https://github.com/HarperFast/datadog-agent-binary#readme)
+for usage, configuration, and Harper integration details.
+
+## License
+
+Apache-2.0. The Datadog Agent binary is distributed under the Apache-2.0
+license per the [Datadog Agent repository](https://github.com/DataDog/datadog-agent).
+`;
+	fs.writeFileSync(path.join(getPackageDir(platform), "README.md"), readme);
+}
+
 // In --all mode (release), tolerate a platform whose binary didn't build:
 // skip it with a warning rather than aborting the whole release, so the
 // platforms that did build still get published. Single-platform and --dummy
@@ -159,6 +189,7 @@ platforms.forEach((platform) => {
 	}
 	const packageJson = writePlatformPackageJson(platform);
 	writePlatformIndexJs(platform);
+	writePlatformReadme(platform);
 	console.log(`Created package: ${packageJson.name}`);
 });
 
