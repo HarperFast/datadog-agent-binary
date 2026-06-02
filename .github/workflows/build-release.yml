@@ -16,11 +16,14 @@ env:
 
 jobs:
   build:
-    # Legs flagged `experimental` (e.g. macos-13, whose Intel runner GitHub has
-    # retired) are allowed to fail so they don't block `release`/`publish`,
-    # which depend on this job. The publish step skips any platform whose
-    # binary is missing.
+    # Legs flagged `experimental` are allowed to fail so they don't block
+    # `release`/`publish`, which depend on this job. The publish step skips any
+    # platform whose binary is missing.
     continue-on-error: ${{ matrix.experimental || false }}
+    # Cap each leg so a runner that never gets scheduled (e.g. a retired runner
+    # image) can't stall the whole build — and therefore the publish — for the
+    # default 6h. A real agent build finishes well within this.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -32,11 +35,10 @@ jobs:
             platform: linux-arm64
 
           # macOS builds
-          # macos-13 is GitHub's Intel runner, which is being retired — allow
-          # this leg to fail rather than block the release.
-          - os: macos-13
-            platform: macos-x86_64
-            experimental: true
+          # macOS x86_64 (Intel) is omitted: GitHub has retired the macos-13
+          # Intel runner, so it can't be built on hosted runners. Re-add it with
+          # a self-hosted or cross-compiling runner if Intel-mac support is
+          # needed again.
           - os: macos-latest
             platform: macos-arm64
 
