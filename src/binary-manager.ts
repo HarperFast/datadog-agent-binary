@@ -24,6 +24,16 @@ export class BinaryManager {
 	async ensureBinary(version?: string): Promise<string> {
 		const platform = Platform.current();
 
+		// Prefer a prebuilt binary shipped via the optional platform package
+		// (e.g. @harperfast/datadog-agent-binary-linux-x86_64). This is the
+		// path used when the package is installed from npm.
+		const packagedBinary = await this.resolveFromPlatformPackage(platform);
+		if (packagedBinary) {
+			logger.debug(`Found packaged binary: ${packagedBinary}`);
+			return packagedBinary;
+		}
+
+		// Fall back to a locally built binary (build-from-source workflow).
 		const targetVersion = version || (await this.getLatestVersion());
 		const binaryPath = await this.getBinaryPath(platform, targetVersion);
 
@@ -33,6 +43,35 @@ export class BinaryManager {
 		}
 
 		throw new Error(`Binary not found for ${platform.getName()}`);
+	}
+
+	/**
+	 * Attempts to resolve the agent binary from the optional platform package
+	 * for the current platform. Returns the binary path if the package is
+	 * installed and the binary exists, otherwise null.
+	 */
+	private async resolveFromPlatformPackage(
+		platform: Platform
+	): Promise<string | null> {
+		const packageName = `@harperfast/datadog-agent-binary-${platform.getName()}`;
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-var-requires
+			const pkg = require(packageName) as {
+				getBinaryPath?: () => string;
+			};
+			if (typeof pkg.getBinaryPath !== "function") {
+				return null;
+			}
+			const binaryPath = pkg.getBinaryPath();
+			if (await this.binaryExists(binaryPath)) {
+				return binaryPath;
+			}
+			return null;
+		} catch {
+			// Package not installed (optional dependency skipped for this
+			// platform) — fall back to the build-from-source path.
+			return null;
+		}
 	}
 
 	private async getBinaryPath(
