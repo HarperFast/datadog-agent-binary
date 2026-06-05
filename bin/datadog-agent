@@ -16,8 +16,8 @@ function logDatadogEnv() {
 			`DD_SITE=${process.env.DD_SITE || "MISSING"}, ` +
 			`DD_ENV=${process.env.DD_ENV || "MISSING"}, ` +
 			`DD_HOSTNAME=${process.env.DD_HOSTNAME || "(default)"}, ` +
-			`DD_LOG_TO_CONSOLE=${process.env.DD_LOG_TO_CONSOLE || "(unset)"}, ` +
-			`DD_LOGS_ENABLED=${process.env.DD_LOGS_ENABLED || "(unset)"}`
+			`DD_LOGS_ENABLED=${process.env.DD_LOGS_ENABLED || "(unset, default false)"}, ` +
+			`DD_LOG_TO_CONSOLE=${process.env.DD_LOG_TO_CONSOLE || "(unset, default true)"}`
 	);
 	if (!process.env.DD_API_KEY) {
 		logger.warn(
@@ -27,11 +27,12 @@ function logDatadogEnv() {
 				"set in the component's datadog.yaml."
 		);
 	}
-	if (!process.env.DD_LOG_TO_CONSOLE && !process.env.DD_LOGS_TO_CONSOLE) {
+	if (!process.env.DD_LOGS_ENABLED) {
 		logger.warn(
-			"DD_LOG_TO_CONSOLE is not set. By default the agent logs to its own log " +
-				"file, not stdout, so its messages will NOT appear in the container " +
-				"logs. Set DD_LOG_TO_CONSOLE=true to surface agent logs here."
+			"DD_LOGS_ENABLED is not set (defaults to false). Log collection is OFF, so " +
+				"application logs will not be forwarded to Datadog even when the agent is " +
+				"running. Set DD_LOGS_ENABLED=true (or logs_enabled: true in datadog.yaml) " +
+				"and configure a logs source."
 		);
 	}
 }
