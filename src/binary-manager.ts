@@ -23,26 +23,42 @@ export class BinaryManager {
 
 	async ensureBinary(version?: string): Promise<string> {
 		const platform = Platform.current();
+		logger.info(
+			`Resolving Datadog Agent binary for platform ${platform.getName()} ` +
+				`(process.platform=${process.platform}, process.arch=${process.arch})`
+		);
 
 		// Prefer a prebuilt binary shipped via the optional platform package
 		// (e.g. @harperfast/datadog-agent-binary-linux-x86_64). This is the
 		// path used when the package is installed from npm.
 		const packagedBinary = await this.resolveFromPlatformPackage(platform);
 		if (packagedBinary) {
-			logger.debug(`Found packaged binary: ${packagedBinary}`);
+			logger.info(`Using packaged Datadog Agent binary: ${packagedBinary}`);
 			return packagedBinary;
 		}
 
 		// Fall back to a locally built binary (build-from-source workflow).
+		logger.warn(
+			`No packaged binary resolved for ${platform.getName()}; falling back to ` +
+				`the build-from-source lookup. This needs a network call to GitHub and ` +
+				`a binary under ${this.buildDir}. In a Harper runtime this almost always ` +
+				`means the optional platform package ` +
+				`@harperfast/datadog-agent-binary-${platform.getName()} was not installed.`
+		);
 		const targetVersion = version || (await this.getLatestVersion());
 		const binaryPath = await this.getBinaryPath(platform, targetVersion);
 
 		if (await this.binaryExists(binaryPath)) {
-			logger.debug(`Found platform binary: ${binaryPath}`);
+			logger.info(`Using locally built Datadog Agent binary: ${binaryPath}`);
 			return binaryPath;
 		}
 
-		throw new Error(`Binary not found for ${platform.getName()}`);
+		throw new Error(
+			`Datadog Agent binary not found for ${platform.getName()}. Checked the ` +
+				`optional platform package ` +
+				`@harperfast/datadog-agent-binary-${platform.getName()} and the local ` +
+				`build path ${binaryPath}; neither resolved a runnable binary.`
+		);
 	}
 
 	/**
@@ -54,6 +70,7 @@ export class BinaryManager {
 		platform: Platform
 	): Promise<string | null> {
 		const packageName = `@harperfast/datadog-agent-binary-${platform.getName()}`;
+		logger.debug(`Attempting to resolve platform package ${packageName}`);
 		try {
 			const pkg = (await import(packageName)) as {
 				default?: { getBinaryPath?: () => string };
@@ -61,16 +78,31 @@ export class BinaryManager {
 			};
 			const getBinaryPath = pkg.getBinaryPath || pkg.default?.getBinaryPath;
 			if (typeof getBinaryPath !== "function") {
+				logger.warn(
+					`Platform package ${packageName} loaded but does not export a ` +
+						`getBinaryPath() function — cannot resolve the agent binary from it.`
+				);
 				return null;
 			}
 			const binaryPath = getBinaryPath();
+			logger.debug(`${packageName} reports binary path: ${binaryPath}`);
 			if (await this.binaryExists(binaryPath)) {
 				return binaryPath;
 			}
+			logger.warn(
+				`Platform package ${packageName} resolved but its binary is missing ` +
+					`at ${binaryPath}.`
+			);
 			return null;
-		} catch {
-			// Package not installed (optional dependency skipped for this
-			// platform) — fall back to the build-from-source path.
+		} catch (error: any) {
+			// Most commonly this means the optional dependency was skipped for
+			// this platform/arch. But it can also hide a real load failure, so
+			// surface the reason instead of swallowing it silently.
+			logger.warn(
+				`Could not load platform package ${packageName}: ${error?.message ?? error}. ` +
+					`If this platform should be supported, confirm the optional dependency ` +
+					`is installed (npm may skip it on os/cpu mismatch or with --no-optional).`
+			);
 			return null;
 		}
 	}
