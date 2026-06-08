@@ -2,9 +2,9 @@ name: Check for New Datadog Agent Releases
 
 on:
   #schedule:
-    # Disabled for now until / unless we revisit using this
-    # Run daily at 10:00 UTC
-    #- cron: "0 10 * * *"
+  # Disabled for now until / unless we revisit using this
+  # Run daily at 10:00 UTC
+  #- cron: "0 10 * * *"
   workflow_dispatch:
 
 env:

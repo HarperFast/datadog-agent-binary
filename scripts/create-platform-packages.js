@@ -46,7 +46,28 @@ function copyPlatformBinary(platform) {
 	if (!fs.existsSync(binaryPath)) {
 		throw new Error(`Binary not found at ${binaryPath}`);
 	}
-	fs.copyFileSync(binaryPath, path.join(packageDir, "bin", binaryName));
+	const destPath = path.join(packageDir, "bin", binaryName);
+	fs.copyFileSync(binaryPath, destPath);
+	// Ensure the executable bit is set so it survives `npm publish`/`npm install`.
+	fs.chmodSync(destPath, 0o755);
+}
+
+// npm filters optionalDependencies using Node's `process.platform` and
+// `process.arch` values, NOT our human-readable names. Map to those so the
+// right binary package actually installs on each host.
+const NPM_OS = { linux: "linux", macos: "darwin", windows: "win32" };
+const NPM_CPU = { x86_64: "x64", arm64: "arm64" };
+
+function npmOS(os) {
+	const mapped = NPM_OS[os];
+	if (!mapped) throw new Error(`No npm os mapping for "${os}"`);
+	return mapped;
+}
+
+function npmCPU(arch) {
+	const mapped = NPM_CPU[arch];
+	if (!mapped) throw new Error(`No npm cpu mapping for "${arch}"`);
+	return mapped;
 }
 
 const version = getParentVersion();
@@ -77,7 +98,7 @@ const packageTemplate = {
 	keywords: ["datadog", "agent", "binary"],
 	author: "Harper",
 	license: "Apache-2.0",
-	files: ["bin/", "index.js"],
+	files: ["bin/", "index.js", "README.md"],
 };
 
 const indexTemplate = `const path = require('path');
@@ -95,8 +116,8 @@ function writePlatformPackageJson(platform) {
 		...packageTemplate,
 		name: `@harperfast/datadog-agent-binary-${platform.getName()}`,
 		description: `Datadog Agent binary for ${os} ${arch}`,
-		os: [os],
-		cpu: [arch],
+		os: [npmOS(os)],
+		cpu: [npmCPU(arch)],
 		keywords: [...packageTemplate.keywords, os, arch],
 	};
 
@@ -117,13 +138,58 @@ function writePlatformIndexJs(platform) {
 	);
 }
 
+function writePlatformReadme(platform) {
+	const name = `@harperfast/datadog-agent-binary-${platform.getName()}`;
+	const os = platform.getOS();
+	const arch = platform.getArch();
+	const readme = `# ${name}
+
+Pre-built Datadog Agent binary for **${os} ${arch}**.
+
+This is a platform-specific companion package for
+[\`@harperfast/datadog-agent-binary\`](https://www.npmjs.com/package/@harperfast/datadog-agent-binary).
+You should **not** install it directly — install the main package instead, and
+npm will automatically select the correct binary for your OS and CPU via
+\`optionalDependencies\`:
+
+\`\`\`bash
+npm install @harperfast/datadog-agent-binary
+\`\`\`
+
+The main package resolves the binary shipped here at runtime. See the
+[main package README](https://github.com/HarperFast/datadog-agent-binary#readme)
+for usage, configuration, and Harper integration details.
+
+## License
+
+Apache-2.0. The Datadog Agent binary is distributed under the Apache-2.0
+license per the [Datadog Agent repository](https://github.com/DataDog/datadog-agent).
+`;
+	fs.writeFileSync(path.join(getPackageDir(platform), "README.md"), readme);
+}
+
+// In --all mode (release), tolerate a platform whose binary didn't build:
+// skip it with a warning rather than aborting the whole release, so the
+// platforms that did build still get published. Single-platform and --dummy
+// modes still fail hard, since a missing binary there is unexpected.
+const tolerateMissing = lastArg === "--all";
+
 platforms.forEach((platform) => {
 	createPackageDir(platform);
 	if (!createDummyPackages) {
-		copyPlatformBinary(platform);
+		try {
+			copyPlatformBinary(platform);
+		} catch (err) {
+			if (tolerateMissing) {
+				console.warn(`Skipping ${platform.getName()}: ${err.message}`);
+				return;
+			}
+			throw err;
+		}
 	}
 	const packageJson = writePlatformPackageJson(platform);
 	writePlatformIndexJs(platform);
+	writePlatformReadme(platform);
 	console.log(`Created package: ${packageJson.name}`);
 });
 
