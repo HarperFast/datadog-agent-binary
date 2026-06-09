@@ -2,9 +2,22 @@
 
 [![Datadog Agent Binaries](https://github.com/HarperFast/datadog-agent-binary/actions/workflows/build-release.yml/badge.svg)](https://github.com/HarperFast/datadog-agent-binary/actions/workflows/build-release.yml)
 
-An NPM package that provides pre-built Datadog Agent binaries.
+Distributes the pre-compiled [Datadog Agent](https://github.com/DataDog/datadog-agent) as an npm package, so the agent can be installed and versioned as a normal Node dependency instead of through a system package manager or container sidecar. This is intended for running the agent alongside a Node application, including inside Harper v5.
 
-Additionally this repo provides tools to build from source for Linux, Windows, and macOS on both arm64 and amd64 architectures (or at least the working subset of those).
+The repo covers two things:
+
+- **Runtime:** the installed agent binary for the current platform and a `datadog-agent` command to run it. This is what consumers depend on.
+- **Build:** tooling to compile the agent from Datadog source for each supported platform, used to produce the published binaries. Most consumers don't need this.
+
+## What it does
+
+- Installs the agent binary for the current platform via `optionalDependencies`. The main package is platform-agnostic and declares one optional dependency per platform (e.g. `@harperfast/datadog-agent-binary-linux-x86_64`), each tagged with npm `os`/`cpu`, so `npm install` fetches only the matching one. No install scripts; no download at install time.
+- Provides a `datadog-agent` command that resolves the installed binary and runs it, passing arguments and environment through to the agent.
+- Passes the `name` option that Harper v5's spawn enforcement requires, so the agent can be launched from a Harper component. See [Harper v5 compatibility](#harper-v5-lincoln-compatibility).
+- Logs binary resolution, the spawn (path, args, PID), exit status, and which Datadog environment variables are present — useful when diagnosing why no data reaches Datadog. The `DD_API_KEY` value is not logged, only whether it is set. See [Startup logging](#startup-logging).
+- Builds the agent from source for Linux, Windows, and macOS on arm64 and amd64 (the working subset).
+
+It does not configure Datadog. API key, site, and collection settings are provided the usual Datadog way — environment variables or `datadog.yaml`. See [Connecting to Datadog](#connecting-to-datadog).
 
 ## Installation
 
@@ -12,84 +25,56 @@ Additionally this repo provides tools to build from source for Linux, Windows, a
 npm install @harperfast/datadog-agent-binary
 ```
 
-Or install globally:
-
-```bash
-npm install -g @harperfast/datadog-agent-binary
-```
-
-Installing the package pulls in the pre-built Datadog Agent binary for your platform automatically. The binary ships inside a platform-specific package (e.g. `@harperfast/datadog-agent-binary-linux-x86_64`) declared as an `optionalDependency`; npm installs only the one whose `os`/`cpu` match your machine.
+Installing pulls in the pre-built agent binary for your platform automatically via `optionalDependencies` — only the package whose `os`/`cpu` match your machine is fetched.
 
 ## Usage
 
-### Using the Datadog Agent
-
-Once installed, you can run the Datadog Agent directly:
+### Running the agent
 
 ```bash
-# Run the agent
-datadog-agent run
-
-# Check agent status
-datadog-agent status
-
-# Show agent version
-datadog-agent version
+datadog-agent run        # run the agent
+datadog-agent status     # check status
+datadog-agent version    # print version
 ```
+
+All arguments and environment variables are passed straight through to the underlying Datadog Agent, so any agent subcommand works.
 
 ### Connecting to Datadog
 
-This package ships the full Datadog Agent. Configuring it (API key, site, what
-to collect) is done the standard Datadog way — e.g. the `DD_API_KEY`/`DD_SITE`
-environment variables or `datadog.yaml` — and is independent of this package.
-See Datadog's [Agent configuration docs](https://docs.datadoghq.com/agent/guide/environment-variables/).
+This package ships the full agent; **configuring** it is independent of this package and done the standard Datadog way. The variables that matter most:
 
-### Building from Source
+| Variable | Purpose | Notes |
+|---|---|---|
+| `DD_API_KEY` | Authenticates to Datadog | Without it the agent starts but **disables** its connection — nothing is sent. |
+| `DD_SITE` | Destination site | e.g. `datadoghq.com`, `datadoghq.eu`. Defaults to `datadoghq.com`. |
+| `DD_ENV` | `env` tag on all data | e.g. `production`, `development`. |
+| `DD_LOGS_ENABLED` | Enables **log collection** | Defaults to `false` — logs only forward when set to `true`. Separate from the agent connecting at all. |
+| `DD_LOG_TO_CONSOLE` | Agent's own logs to stdout | Defaults to `true`. |
 
-If you need to build from source or want to build for multiple platforms:
+See Datadog's [Agent environment variables](https://docs.datadoghq.com/agent/guide/environment-variables/) for the full list, or use a `datadog.yaml`.
 
-```bash
-# Build for current platform
-datadog-agent-build build
+### Startup logging
 
-# Specify version and output directory
-datadog-agent-build build --datadog-version 7.50.0 --output ~/my-datadog-agent-build
-```
+The `datadog-agent` launcher emits diagnostics at `info`/`warn` (visible without any debug flag) before and around the spawn:
 
-### Management Commands
+- the detected platform/arch and the resolved binary path (or a warning if no platform package is installed);
+- the spawn itself — binary path, args, child PID — and the exit code or terminating signal;
+- which Datadog env vars are present: `DD_API_KEY` (reported only as `set`/`MISSING`, never the value), `DD_SITE`, `DD_ENV`, `DD_LOGS_ENABLED`, `DD_LOG_TO_CONSOLE`;
+- a clear error naming the path to allowlist if Harper's spawn enforcement rejects the launch.
 
-```bash
-# Install or reinstall binary
-datadog-agent-build install
+This makes the common failure modes ("agent disabling," "no logs flowing," "spawn blocked") diagnosable straight from the container logs.
 
-# List supported platforms
-datadog-agent-build platforms
-
-# Get latest version
-datadog-agent-build version
-```
-
-### Programmatic Usage
+### Programmatic usage
 
 ```typescript
-import { DatadogAgentBuilder, BinaryManager } from '@harperfast/datadog-agent-binary';
+import { BinaryManager } from '@harperfast/datadog-agent-binary';
 
-// Use pre-built binaries
-const manager = new BinaryManager();
-const binaryPath = await manager.ensureBinary(); // resolves the platform binary installed via optionalDependencies
+// Resolve the platform binary installed via optionalDependencies.
+const binaryPath = await new BinaryManager().ensureBinary();
 console.log(`Datadog Agent at: ${binaryPath}`);
-
-// Build from source
-const builder = new DatadogAgentBuilder();
-
-// Build for current platform
-const result = await builder.buildForCurrentPlatform({
-  version: '7.50.0',
-  outputDir: './build'
-});
 ```
 
-## Supported Platforms
+## Supported platforms
 
 | OS | Architecture | Status |
 |----|-------------|--------|
@@ -100,112 +85,17 @@ const result = await builder.buildForCurrentPlatform({
 | macOS | x86_64 | ✅ |
 | macOS | arm64 | ✅ |
 
-Windows arm64 support is blocked by [Chocolatey](https://chocolatey.org) not supporting arm64 natively.
-
-## Build Requirements
-
-### Linux
-- Go 1.23
-- Node 18+
-- Python 3.12
-- GCC
-- CMake
-- Git
-
-### macOS
-- Go 1.23
-- Node 18+
-- Python 3.12
-- Xcode Command Line Tools
-- CMake
-- Git
-
-### Windows
-- Go 1.23
-- Node 18+
-- Python 3.12
-- MinGW-w64 GCC
-- CMake
-- Git
-
-## API Reference
-
-### DatadogAgentBuilder
-
-Main class for building Datadog Agent binaries.
-
-#### Methods
-
-- `buildForCurrentPlatform(options?)`: Build for the current platform
-
-#### Options
-
-```typescript
-interface BuildOptions {
-  version?: string;      // Datadog Agent version (default: latest)
-  outputDir?: string;    // Output directory (default: ./build)
-  sourceDir?: string;    // Source directory (default: downloads source)
-  buildArgs?: string[];  // Additional build arguments
-}
-```
-
-### Platform Detection
-
-```typescript
-import { Platform, getAllSupportedPlatforms } from '@harperfast/datadog-agent-binary';
-
-const currentPlatform = Platform.current().getName(); // e.g. "linux-x86_64"
-const allPlatforms = getAllSupportedPlatforms();       // all supported "<os>-<arch>" names
-```
-
-## How It Works
-
-1. **Pre-built binaries via optional dependencies**: The main package is platform-agnostic and declares one `optionalDependency` per platform. Each of those packages contains the pre-built agent binary and is tagged with npm `os`/`cpu`, so `npm install` pulls in only the package matching your machine. At runtime `BinaryManager.ensureBinary()` resolves the binary from that installed package.
-
-2. **Release Process**:
-   - GitHub Actions builds the agent for all platforms from Datadog Agent source.
-   - Each platform binary is published as its own npm package, and the main package is published referencing them as optional dependencies.
-   - Standalone archives are also attached to the GitHub Release for manual download/verification.
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Build the TypeScript package
-npm run build
-
-# Run type checking
-npm run typecheck
-
-# Build the agent for the current platform
-npm run build-agent
-
-# Run the tests
-npm test
-```
+Windows arm64 is blocked by [Chocolatey](https://chocolatey.org) not supporting arm64 natively.
 
 ## Harper v5 (Lincoln) compatibility
 
-This package is compatible with Harper v5. A few notes for consumers running
-Harper v5 applications:
+Running the agent from inside a Harper v5 application has two requirements; this package handles one of them and the consuming app handles the other.
 
 ### Spawning the agent from a Harper component
 
-Harper v5 tightens `node:child_process` semantics for code running inside an
-application. Any `spawn` / `exec` / `execFile` may only target an executable
-listed in `applications.allowedSpawnCommands`, and must include a `name`
-option so Harper can dedupe the child across worker threads.
+Harper v5 only lets a component `spawn`/`exec` an executable that is (a) launched with a `name` option (so Harper can dedupe the child across worker threads) and (b) listed by its **exact absolute path** in `applications.allowedSpawnCommands`.
 
-The `datadog-agent` CLI shim and the `BinaryManager`-generated wrapper
-already pass `name: "datadog-agent"`, so the only thing the consuming
-application needs to do is register the resolved binary path in
-`harperdb-config.yaml`. Harper does an exact-match lookup against the
-**absolute** path passed to `spawn`, so the full path is required — a bare
-command name will not match.
-
-Resolve the path with `BinaryManager.ensureBinary()`:
+The `datadog-agent` launcher already passes `name: "datadog-agent"`, so all the consuming app must do is allowlist the resolved binary path. Resolve it the same way the launcher does:
 
 ```js
 import { BinaryManager } from '@harperfast/datadog-agent-binary';
@@ -222,25 +112,65 @@ applications:
     - /app/node_modules/@harperfast/datadog-agent-binary-linux-x86_64/bin/datadog-agent
 ```
 
+A bare command name will not match — the full absolute path is required. The path has no version number in it, so it does not change when you upgrade the package.
+
 ### Install scripts
 
-Harper v5 installs packages with `--ignore-scripts` by default. This package
-and its platform sub-packages **do not** rely on install scripts — the
-correct platform binary is selected automatically through
-`optionalDependencies`. You do **not** need to set
-`applications.allowInstallScripts: true` in `harperdb-config.yaml` to
-install this package.
+Harper v5 installs packages with `--ignore-scripts` by default. This package and its platform sub-packages **do not** rely on install scripts — the right binary is selected through `optionalDependencies`. You do **not** need `applications.allowInstallScripts: true`.
 
-### Build-time tooling
+### Build-time tooling is not for the runtime
 
-`DatadogAgentBuilder` (the source-build path that shells out to `dda`, `go`,
-`pipx`, `pip`, etc.) is intended for use from a developer shell or CI runner,
-not from inside a Harper-managed process. The runtime entry point —
-`BinaryManager.ensureBinary()` plus the `datadog-agent` wrapper — is the
-supported way to use this package from a Harper component.
+`DatadogAgentBuilder` (the source-build path that shells out to `dda`, `go`, `pip`, etc.) is for a developer shell or CI runner, not for use inside a Harper-managed process. The supported runtime entry point is `BinaryManager.ensureBinary()` plus the `datadog-agent` launcher.
+
+## Building from source (maintainers)
+
+Most consumers never need this — it's how the published binaries are produced.
+
+```bash
+# Build for the current platform
+datadog-agent-build build
+
+# Pin a version and output directory
+datadog-agent-build build --datadog-version 7.50.0 --output ~/my-datadog-agent-build
+
+# Other commands
+datadog-agent-build install     # (re)install the binary for this platform
+datadog-agent-build platforms   # list supported platforms
+datadog-agent-build version     # latest upstream version
+```
+
+```typescript
+import { DatadogAgentBuilder } from '@harperfast/datadog-agent-binary';
+
+const result = await new DatadogAgentBuilder().buildForCurrentPlatform({
+  version: '7.50.0',
+  outputDir: './build',
+});
+```
+
+`BuildOptions`: `version?`, `outputDir?`, `sourceDir?`, `buildArgs?`.
+
+### Build requirements
+
+Go 1.23, Node 18+, Python 3.12, CMake, Git, plus a C toolchain per platform: GCC (Linux), Xcode Command Line Tools (macOS), MinGW-w64 GCC (Windows).
+
+## How it works
+
+1. **Pre-built binaries via optional dependencies.** The main package is platform-agnostic and declares one `optionalDependency` per platform. Each contains the pre-built agent and is tagged with npm `os`/`cpu`, so `npm install` pulls only the matching one. At runtime `BinaryManager.ensureBinary()` resolves the binary from that installed package (falling back to a locally built binary for the source-build workflow).
+2. **Release process.** GitHub Actions builds the agent for all platforms from Datadog source, smoke-tests that each binary runs standalone, publishes each as its own npm package, and publishes the main package referencing them as optional dependencies. Standalone archives are also attached to the GitHub Release.
+
+## Development
+
+```bash
+npm install         # dependencies
+npm run build       # compile TypeScript
+npm run typecheck   # type-check only
+npm run build-agent # build the agent for the current platform
+npm test            # run the tests
+```
 
 ## License
 
-Apache License 2.0
+Apache License 2.0.
 
-The binaries this package downloads, builds, and distributes are licensed and distributed under the Apache License 2.0 as specified in the [Datadog Agent repository](https://github.com/DataDog/datadog-agent). The datadog-agent source code is copyrighted by Datadog, Inc.
+The binaries this package downloads, builds, and distributes are licensed under the Apache License 2.0 as specified in the [Datadog Agent repository](https://github.com/DataDog/datadog-agent). The datadog-agent source code is copyrighted by Datadog, Inc.
