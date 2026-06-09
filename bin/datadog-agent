@@ -4,27 +4,83 @@ const { BinaryManager } = require("../dist/binary-manager.js");
 const { spawn } = require("child_process");
 const { logger } = require("../dist/logger.js");
 
+// Report which Datadog-relevant environment variables are visible to this
+// process. The agent disables itself (or silently collects nothing) when its
+// API key / site are missing, so confirming what actually reached the process
+// is the first thing to check when "no logs are flowing".
+function logDatadogEnv() {
+	const present = (name) => (process.env[name] ? "set" : "MISSING");
+	logger.info(
+		"Datadog env visible to wrapper: " +
+			`DD_API_KEY=${present("DD_API_KEY")}, ` +
+			`DD_SITE=${process.env.DD_SITE || "MISSING"}, ` +
+			`DD_ENV=${process.env.DD_ENV || "MISSING"}, ` +
+			`DD_HOSTNAME=${process.env.DD_HOSTNAME || "(default)"}, ` +
+			`DD_LOGS_ENABLED=${process.env.DD_LOGS_ENABLED || "(unset, default false)"}, ` +
+			`DD_LOG_TO_CONSOLE=${process.env.DD_LOG_TO_CONSOLE || "(unset, default true)"}`
+	);
+	if (!process.env.DD_API_KEY) {
+		logger.warn(
+			"DD_API_KEY is not set in this process. The agent will start but disable " +
+				"its connection to Datadog, so nothing will appear in env:development. " +
+				"Confirm the API key is exported into the spawning process (loadEnv) or " +
+				"set in the component's datadog.yaml."
+		);
+	}
+	if (!process.env.DD_LOGS_ENABLED) {
+		logger.warn(
+			"DD_LOGS_ENABLED is not set (defaults to false). Log collection is OFF, so " +
+				"application logs will not be forwarded to Datadog even when the agent is " +
+				"running. Set DD_LOGS_ENABLED=true (or logs_enabled: true in datadog.yaml) " +
+				"and configure a logs source."
+		);
+	}
+}
+
 async function main() {
+	const args = process.argv.slice(2);
 	try {
+		logDatadogEnv();
+
 		const manager = new BinaryManager();
 		const binaryPath = await manager.ensureBinary();
+
+		logger.info(
+			`Spawning datadog-agent: ${binaryPath} ${args.join(" ")} ` +
+				`(cwd=${process.cwd()})`
+		);
 
 		// Harper v5 requires `name` on spawn options when invoked from inside a
 		// Harper application — it lets Harper dedupe the child across worker
 		// threads. The option is silently ignored by stock Node.js, so this is
 		// safe outside Harper too.
-		const child = spawn(binaryPath, process.argv.slice(2), {
+		const child = spawn(binaryPath, args, {
 			stdio: "inherit",
 			env: process.env,
 			name: "datadog-agent",
 		});
 
-		child.on("exit", (code) => {
+		logger.info(`datadog-agent child process started (pid=${child.pid})`);
+
+		child.on("exit", (code, signal) => {
+			if (signal) {
+				logger.warn(`datadog-agent terminated by signal ${signal}`);
+			} else if (code && code !== 0) {
+				logger.error(`datadog-agent exited with non-zero code ${code}`);
+			} else {
+				logger.info(`datadog-agent exited with code ${code}`);
+			}
 			process.exit(code || 0);
 		});
 
 		child.on("error", (error) => {
+			// Under Harper v5 spawn enforcement, a binary path that is not listed
+			// in applications.allowedSpawnCommands surfaces here as an error.
 			logger.error(`Failed to execute datadog-agent: ${error.message}`);
+			logger.error(
+				`If running under Harper, confirm this exact absolute path is in ` +
+					`applications.allowedSpawnCommands: ${binaryPath}`
+			);
 			process.exit(1);
 		});
 	} catch (error) {

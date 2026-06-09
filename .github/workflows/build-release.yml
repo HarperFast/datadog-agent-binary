@@ -9,6 +9,9 @@ on:
       datadog_version:
         description: "Datadog Agent version to build"
         required: false
+      agent_build_args:
+        description: "Override args for `dda inv agent.build` (e.g. to build a self-contained, Python-free binary). Leave blank for default."
+        required: false
 
 env:
   NODE_VERSION: "22"
@@ -16,19 +19,45 @@ env:
 
 jobs:
   build:
+    # Legs flagged `experimental` are allowed to fail so they don't block
+    # `release`/`publish`, which depend on this job. The publish step skips any
+    # platform whose binary is missing.
+    continue-on-error: ${{ matrix.experimental || false }}
+    # Cap each leg so a runner that never gets scheduled (e.g. a retired runner
+    # image) can't stall the whole build — and therefore the publish — for the
+    # default 6h. A real agent build finishes well within this.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           # Linux builds
-          - os: ubuntu-latest
+          #
+          # glibc floor: the agent binary links against whatever glibc the
+          # build runner ships, and glibc is backward-compatible only upward
+          # (a binary built on an older glibc runs on newer ones, not vice
+          # versa). The Harper Pro runtime image is Debian 12 (glibc 2.36), so
+          # we must build on a runner whose glibc is <= 2.36 or the binary
+          # won't load there (it would reference GLIBC_2.38/2.39 symbols that
+          # don't exist on the image). ubuntu-latest is now Ubuntu 24.04
+          # (glibc 2.39), so we pin to ubuntu-22.04 (glibc 2.35). The agent
+          # does not actually require any newer glibc feature; upstream
+          # Datadog builds against an even older glibc for portability.
+          - os: ubuntu-22.04
             platform: linux-x86_64
-          - os: linux-arm-24-2
+          # GitHub-hosted arm64 runner on Ubuntu 22.04 (glibc 2.35), the arm
+          # counterpart of the x86_64 pin above. If hosted arm runners aren't
+          # available, swap this for any arm runner whose glibc is <= 2.36;
+          # the "Verify glibc floor" step below will fail the build if it
+          # isn't.
+          - os: ubuntu-22.04-arm
             platform: linux-arm64
 
           # macOS builds
-          - os: macos-13
-            platform: macos-x86_64
+          # macOS x86_64 (Intel) is omitted: GitHub has retired the macos-13
+          # Intel runner, so it can't be built on hosted runners. Re-add it with
+          # a self-hosted or cross-compiling runner if Intel-mac support is
+          # needed again.
           - os: macos-latest
             platform: macos-arm64
 
@@ -64,7 +93,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential python3.12-dev
+          sudo apt-get install -y cmake build-essential
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
@@ -112,6 +141,7 @@ jobs:
         if: runner.os != 'Windows'
         env:
           DEBUG: true
+          DD_AGENT_BUILD_ARGS: ${{ github.event.inputs.agent_build_args }}
         run: |
           if [ -n "${{ steps.extract_version_unix.outputs.version }}" ]; then
             node dist/cli.js build --datadog-version ${{ steps.extract_version_unix.outputs.version }}
@@ -124,6 +154,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           DEBUG: true
+          DD_AGENT_BUILD_ARGS: ${{ github.event.inputs.agent_build_args }}
         run: |
           if ("${{ steps.extract_version_windows.outputs.version }}" -ne "") {
             node dist/cli.js build --datadog-version ${{ steps.extract_version_windows.outputs.version }}
@@ -131,6 +162,62 @@ jobs:
             node dist/cli.js build
           }
         shell: pwsh
+
+      # Prove the binary actually runs as a standalone file BEFORE we ship it.
+      # We hide the build tree first so a binary that still links libraries by
+      # their build-time path (e.g. librtloader) can't be satisfied — that's the
+      # exact failure that only shows up on a user's machine. A self-contained
+      # binary runs fine; a non-relocatable one fails here and blocks the
+      # release instead of publishing something that won't start.
+      - name: Smoke test ${{ matrix.platform }} runs standalone (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -e
+          bin="build/${{ matrix.platform }}/bin/datadog-agent"
+          src="build/${{ matrix.platform }}/src"
+          [ -d "$src" ] && mv "$src" "${src}.hidden" || true
+          echo "Running: $bin version (build tree hidden)"
+          "$bin" version
+          [ -d "${src}.hidden" ] && mv "${src}.hidden" "$src" || true
+
+      # Guard against the symbol floor creeping back up. The Harper Pro runtime
+      # image (Debian 12) provides glibc 2.36 (libc.so.6) AND libstdc++
+      # GLIBCXX_3.4.30 (from GCC 12). These are two SEPARATE libraries: the
+      # glibc floor is set by the runner's Ubuntu version, the GLIBCXX floor by
+      # its GCC version. The agent binary must not reference a symbol newer than
+      # either, or it fails to load on the image with "version `GLIBC_2.xx' not
+      # found" or "version `GLIBCXX_3.4.xx' not found" — the latter is the exact
+      # error the Macy's deploy hit on rocksdb-js. Building on ubuntu-22.04
+      # (glibc 2.35, GCC 11 -> GLIBCXX_3.4.29) keeps both under the limit. This
+      # step fails the build loudly if either floor is exceeded, so we catch it
+      # in CI instead of on a customer's instance.
+      - name: Verify glibc / libstdc++ floor (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+          bin="build/${{ matrix.platform }}/bin/datadog-agent"
+
+          check() {
+            label="$1"; prefix="$2"; limit="$3"
+            # GLIBC_ won't match GLIBCXX_ (char after GLIBC is X, not _), so the
+            # two families are counted independently.
+            max=$(strings -a "$bin" | grep -o "${prefix}_[0-9.]\+" | sed "s/${prefix}_//" | sort -uV | tail -1)
+            echo "${label}: binary references up to ${prefix}_${max:-<none>}; image provides ${prefix}_${limit}"
+            if [ -n "$max" ] && [ "$(printf '%s\n%s\n' "$limit" "$max" | sort -V | tail -1)" != "$limit" ]; then
+              echo "::error::Binary requires ${prefix}_${max} but the Harper Pro runtime image only provides ${prefix}_${limit}. Build on an older toolchain (glibc <= 2.36, GCC <= 12) so the agent loads on the image."
+              return 1
+            fi
+            return 0
+          }
+
+          rc=0
+          check "glibc"     "GLIBC"    "2.36"   || rc=1
+          check "libstdc++" "GLIBCXX"  "3.4.30" || rc=1
+          if [ "$rc" -eq 0 ]; then
+            echo "OK: binary stays within the Harper Pro image's glibc and libstdc++ versions."
+          fi
+          exit "$rc"
 
       - name: Upload ${{ matrix.platform }} artifacts
         uses: actions/upload-artifact@v4
@@ -270,10 +357,9 @@ jobs:
           pushd artifacts
           for artifact in *
           do
-            echo "Moving contents of $artifact into ../build/$platform/bin/"
-            echo "Listing contents of $artifact"
-            ls -l "$artifact"
             platform=${artifact#agent-}
+            echo "Moving contents of $artifact into ../build/$platform/bin/"
+            ls -l "$artifact"
             mkdir -p "../build/$platform/bin"
             mv "$artifact"/* "../build/$platform/bin/"
           done
@@ -291,6 +377,16 @@ jobs:
 
       - name: Build TypeScript
         run: npm run build
+
+      # The release tag (vX.Y.Z) is the version everything is published at, so
+      # the npm package version must match it. This runs the `version` lifecycle
+      # script (build + update-optional-deps), keeping optionalDependencies
+      # pinned to the same version. --allow-same-version makes re-runs safe.
+      - name: Set package version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting npm package version to $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Prepare platform packages with binaries
         run: |
