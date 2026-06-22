@@ -46,6 +46,5 @@ logs:
       - type: multi_line
         name: harper_new_log_starts_with_timestamp
         pattern: '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
-    tags:
-      - "env:development"
-      - "version:0.1.0"
+    # env / version are inherited globally from DD_ENV / DD_VERSION (or the
+    # Agent config) — no need to set them per source here.
