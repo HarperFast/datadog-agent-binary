@@ -188,7 +188,7 @@ const result = await new DatadogAgentBuilder().buildForCurrentPlatform({
 
 ### Build requirements
 
-Go 1.23, Node 18+, Python 3.12, CMake, Git, plus a C toolchain per platform: GCC (Linux), Xcode Command Line Tools (macOS), MinGW-w64 GCC (Windows).
+Go (match the agent's `go.mod` — 7.79.x needs Go 1.25.x), Node 18+, Python 3.12, CMake, Git, plus a C toolchain per platform: GCC (Linux), Xcode Command Line Tools (macOS), MinGW-w64 GCC (Windows).
 
 ## How it works
 
