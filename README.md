@@ -53,6 +53,42 @@ This package ships the full agent; **configuring** it is independent of this pac
 
 See Datadog's [Agent environment variables](https://docs.datadoghq.com/agent/guide/environment-variables/) for the full list, or use a `datadog.yaml`.
 
+### Log collection (Harper `hdb.log`)
+
+To forward Harper's logs, enable log collection (`DD_LOGS_ENABLED=true` or `logs_enabled: true`) and give the Agent a file source that tails `hdb.log`. A ready-to-edit template ships with this package at [`conf.d/harperdb.d/conf.yaml.example`](conf.d/harperdb.d/conf.yaml.example).
+
+The Agent reads this from a `conf.d/harperdb.d/conf.yaml` file — there are two ways to get it there:
+
+- **Standalone Agent:** copy the template into the Agent's `conf.d` (or point `confd_path` / `DD_CONFD_PATH` at it) and set `path`/`service` for your deployment.
+- **Launcher that writes the config in code:** if your component generates the Agent config at startup (sets `confd_path` and writes `conf.d/harperdb.d/conf.yaml`), add the same `logs:` block below — including the `multi_line` rule — to the config it writes. It's the same file, just generated instead of hand-placed.
+
+**Harper logs are multi-line plain text — use a `multi_line` rule.** `hdb.log` is not JSON. A single event starts with an ISO-8601 timestamp and its stack traces / pretty-printed error objects continue on following lines that do *not* start with a timestamp:
+
+```
+2026-05-22T22:28:41.020Z [main/0] [warn] [analytics]: Error ... ENOENT ...
+    at Object.readdirSync (node:fs:1583:26)
+    at storeDBSizeMetrics (.../analytics/write.ts:327:31)
+  code: 'ENOENT',
+}
+```
+
+By default the Agent treats every physical line as its own log, so each `at ...`/`code:` line arrives in Datadog as a separate entry — the "logs coming in line by line" symptom. The fix is an Agent-side `multi_line` rule that starts a new entry only when a line begins with a timestamp and appends everything else to it:
+
+```yaml
+logs:
+  - type: file
+    path: "/path/to/harper/log/hdb.log"   # {ROOTPATH}/log/hdb.log
+    service: "harper"                       # match DD_SERVICE
+    log_processing_rules:
+      - type: multi_line
+        name: harper_new_log_starts_with_timestamp
+        pattern: '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'   # auto-anchored to line start; no leading ^
+```
+
+Verified end to end against a real `hdb.log` with the bundled Agent: 185,440 physical lines collapse to 15,952 events, and a multi-line stack trace ships as a single log entry (its `message` contains all the `at ...` lines).
+
+The `multi_line` rule is the actual fix, and it works **regardless of the `source` tag** — setting `source: harperdb` neither causes nor fixes the line splitting. `source` is therefore optional: leave it off, or set `source: harperdb` if you plan to build a custom Datadog log pipeline to parse these plain-text logs (extract level, thread, etc.). (If Harper is ever reconfigured to emit one JSON object per line, you can drop the `multi_line` rule and let Datadog parse the JSON natively instead.)
+
 ### Startup logging
 
 The `datadog-agent` launcher emits diagnostics at `info`/`warn` (visible without any debug flag) before and around the spawn:
@@ -152,7 +188,7 @@ const result = await new DatadogAgentBuilder().buildForCurrentPlatform({
 
 ### Build requirements
 
-Go 1.23, Node 18+, Python 3.12, CMake, Git, plus a C toolchain per platform: GCC (Linux), Xcode Command Line Tools (macOS), MinGW-w64 GCC (Windows).
+Go (match the agent's `go.mod` — 7.79.x needs Go 1.25.x), Node 18+, Python 3.12, CMake, Git, plus a C toolchain per platform: GCC (Linux), Xcode Command Line Tools (macOS), MinGW-w64 GCC (Windows).
 
 ## How it works
 

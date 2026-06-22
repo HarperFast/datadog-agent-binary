@@ -15,7 +15,13 @@ on:
 
 env:
   NODE_VERSION: "22"
-  GO_VERSION: "1.23"
+  # Must satisfy the agent's go.mod `go` directive — agent 7.79.x needs Go 1.25.x.
+  GO_VERSION: "1.25.8"
+  # The Datadog Agent version this package BUNDLES. This is independent of the
+  # package's own release version (the git tag / npm version). Set it to the
+  # upstream Datadog Agent release you want to ship; bump it on its own cadence.
+  # A workflow_dispatch `datadog_version` input overrides it for one-off builds.
+  DATADOG_AGENT_VERSION: "7.79.1"
 
 jobs:
   build:
@@ -111,29 +117,28 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: Extract version from tag (Unix)
+      # The agent version to BUILD is independent of the package release version
+      # (the git tag). It comes from a workflow_dispatch input if given,
+      # otherwise the DATADOG_AGENT_VERSION env above. The tag only drives the
+      # npm package version (set in the publish job).
+      - name: Resolve Datadog Agent version to build (Unix)
         if: runner.os != 'Windows'
         id: extract_version_unix
         run: |
           if [ -n "${{ github.event.inputs.datadog_version }}" ]; then
             echo "version=${{ github.event.inputs.datadog_version }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           else
-            echo "version=" >> $GITHUB_OUTPUT
+            echo "version=${DATADOG_AGENT_VERSION}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Extract version from tag (Windows)
+      - name: Resolve Datadog Agent version to build (Windows)
         if: runner.os == 'Windows'
         id: extract_version_windows
         run: |
           if ("${{ github.event.inputs.datadog_version }}" -ne "") {
             echo "version=${{ github.event.inputs.datadog_version }}" >> $env:GITHUB_OUTPUT
-          } elseif ("${{ github.ref }}" -like "refs/tags/v*") {
-            $version = "${{ github.ref }}" -replace "refs/tags/v", ""
-            echo "version=$version" >> $env:GITHUB_OUTPUT
           } else {
-            echo "version=" >> $env:GITHUB_OUTPUT
+            echo "version=$env:DATADOG_AGENT_VERSION" >> $env:GITHUB_OUTPUT
           }
         shell: pwsh
 
@@ -388,6 +393,16 @@ jobs:
           echo "Setting npm package version to $VERSION"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      # Prerelease tags (anything with a hyphen, e.g. v7.75.5-next.4) publish
+      # under the `next` dist-tag so they do NOT move `latest`. Stable tags
+      # publish under `latest` as usual.
+      - name: Determine npm dist-tag
+        id: disttag
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then TAG=next; else TAG=latest; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing under npm dist-tag: $TAG"
+
       - name: Prepare platform packages with binaries
         run: |
           node scripts/create-platform-packages.js --all
@@ -402,7 +417,7 @@ jobs:
 
             # Check if binaries exist
             if [ -d "bin" ] && [ "$(ls -A bin)" ]; then
-              npm publish --access public
+              npm publish --access public --tag ${{ steps.disttag.outputs.tag }}
               echo "Published @harperfast/datadog-agent-binary-$platform"
             else
               echo "Skipping $platform - no binaries found"
@@ -414,6 +429,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package
-        run: npm publish --access public
+        run: npm publish --access public --tag ${{ steps.disttag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

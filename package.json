@@ -52,6 +52,7 @@
 	"files": [
 		"dist/",
 		"bin/",
+		"conf.d/",
 		"README.md"
 	],
 	"engines": {
